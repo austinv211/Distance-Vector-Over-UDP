@@ -1,0 +1,3 @@
+*.pyc
+.gitignore.swp
+__pycache__/**
