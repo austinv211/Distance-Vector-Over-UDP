@@ -6,6 +6,7 @@ import time
 import types
 from message import Message
 import pickle
+import sys
 
 
 LOCAL_TOPOLOGY = None
@@ -20,7 +21,7 @@ ROUTING_TABLE = {}
 COUNT_SINCE_RECEIVED = {}
 
 
-def update_routing_table(server_costs):
+def update_routing_table(server_costs, overwrite=False):
     global ROUTING_TABLE
     for (s_id, n_id, cost) in server_costs:
         if s_id in ROUTING_TABLE:
@@ -50,8 +51,20 @@ def _display():
             print(f'    {key}          {n_id}       {cost if cost > 0 else "inf"}')
     return 'display SUCCESS'
 
-def _disable():
-    raise NotImplementedError()
+
+def _disable(neighbor_id):
+    neighbor_id = int(neighbor_id)
+    message = Message([(MY_ID, neighbor_id, -1)], MY_PORT, MY_ID, _myip(), flag='disable')
+    send_it(neighbor_id, pickle.dumps(message))
+    LOCAL_TOPOLOGY.remove_neighbor(MY_ID, neighbor_id)
+    update_routing_table([(MY_ID, neighbor_id, -1)])
+    update_routing_table([(neighbor_id, MY_ID, -1)])
+    return 'disable SUCCESS'
+
+def _crash():
+    for (n_id, _) in LOCAL_TOPOLOGY.neighbors[MY_ID]:
+        # call disable for every neighbor
+        _disable(n_id)
         
 
 def _packets():
@@ -106,7 +119,7 @@ def _update(s_id_1, s_id_2, new_cost):
     return f'update {s_id_1} {s_id_2} {new_cost} SUCCESS'
 
 
-def _server(topology_file_path, routing_update_interval, test_mode=False):
+def _server(topology_file_path, routing_update_interval):
     global LOCAL_TOPOLOGY
     global MY_ID
     global MY_PORT
@@ -129,12 +142,13 @@ def _server(topology_file_path, routing_update_interval, test_mode=False):
 
 def _myip() -> None:
     try:
+        # TODO: ifconfig eth0 or ipconfig
         address_list = socket.gethostbyname_ex(socket.gethostname())[2]
         for address in address_list:
             if address != '127.0.0.1':
                 return address
         print('Could not get IP address. Exiting ...')
-        _exit()
+        sys.exit(1)
     except:
         print('Error Getting IP.')
 
@@ -168,6 +182,10 @@ def service_connection(key, mask):
         if recv_data:
             message = pickle.loads(recv_data)
             update_routing_table(message.update_fields)
+            # Check if message flag is disable, if so remove the link
+            if message.flag == 'disable':
+                LOCAL_TOPOLOGY.remove_neighbor(MY_ID, data.c_id)
+                update_routing_table([(MY_ID, data.c_id, -1)])
             PACKETS_RECEIVED += 1
             print(f'RECEIVED A MESSAGE FROM SERVER: {data.c_id}')
             COUNT_SINCE_RECEIVED[data.c_id] = 0

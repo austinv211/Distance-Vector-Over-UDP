@@ -16,6 +16,12 @@ class Topology:
     def get_neighbors_to_server(self, server_id):
         return self.neighbors.get(server_id)
 
+    def remove_neighbor(self, server_id, neighbor_id):
+        for index, (n_id, _) in enumerate(self.neighbors[server_id]):
+            if n_id == neighbor_id:
+                del self.neighbors[server_id][index]
+                print(f'removed link to neighbor: {neighbor_id}')
+
     def update_cost(self, server_id, neighbor_id, new_cost):
         for index, item in enumerate(self.neighbors[server_id]):
             if item[0] == neighbor_id:

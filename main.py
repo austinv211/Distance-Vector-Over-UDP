@@ -3,14 +3,16 @@ from functools import partial
 from aioconsole import ainput, aprint
 import threading
 import sys
-from server_functions import _server, _step, _packets, _update, _display
+from server_functions import _server, _step, _packets, _update, _display, _disable, _crash
 
 COMMANDS_DICT = {
     'server': _server,
     'step': _step,
     'update': _update,
     'packets': _packets,
-    'display': _display
+    'display': _display,
+    'disable': _disable,
+    'crash': _crash
 }
 
 async def main():
