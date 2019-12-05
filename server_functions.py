@@ -16,7 +16,8 @@ MY_PORT = -1
 NUM_SECS = 0
 MY_SOCK = None
 PACKETS_RECEIVED = 0
-ROUTING_TABLE = {} 
+ROUTING_TABLE = {}
+COUNT_SINCE_RECEIVED = {}
 
 
 def update_routing_table(server_costs):
@@ -48,6 +49,9 @@ def _display():
         for (n_id, cost) in sorted(costs):
             print(f'    {key}          {n_id}       {cost if cost > 0 else "inf"}')
     return 'display SUCCESS'
+
+def _disable():
+    raise NotImplementedError()
         
 
 def _packets():
@@ -71,6 +75,10 @@ def update_loop():
     while True:
         time.sleep(NUM_SECS)
         update_neighbors(pickle.dumps(Message([(MY_ID, n_id, cost) for key in ROUTING_TABLE.keys() for n_id, cost in ROUTING_TABLE[key] if n_id != MY_ID], MY_PORT, MY_ID, _myip)))
+        for key in COUNT_SINCE_RECEIVED.keys():
+            if COUNT_SINCE_RECEIVED[key] == 3:
+                update_routing_table([(MY_ID, key, -1)])
+            COUNT_SINCE_RECEIVED[key] += 1
 
 
 def _step():
@@ -103,6 +111,7 @@ def _server(topology_file_path, routing_update_interval, test_mode=False):
     global MY_ID
     global MY_PORT
     global NUM_SECS
+    global COUNT_SINCE_RECEIVED
     NUM_SECS = int(routing_update_interval)
     my_ip = _myip()
     LOCAL_TOPOLOGY = topology_reader(topology_file_path)
@@ -112,6 +121,8 @@ def _server(topology_file_path, routing_update_interval, test_mode=False):
             MY_ID = id
             MY_PORT = port
             run_server(port)
+            for (n_id, _) in LOCAL_TOPOLOGY.neighbors[MY_ID]:
+                COUNT_SINCE_RECEIVED[n_id] = 0
             return f'topology gathered, server running: {(MY_ID, my_ip, MY_PORT)}'
     return f'Could not find ip in topology'
 
@@ -159,6 +170,7 @@ def service_connection(key, mask):
             update_routing_table(message.update_fields)
             PACKETS_RECEIVED += 1
             print(f'RECEIVED A MESSAGE FROM SERVER: {data.c_id}')
+            COUNT_SINCE_RECEIVED[data.c_id] = 0
     if mask & selectors.EVENT_WRITE:
         if data.message:
             sock.sendto(data.message, data.addr)
