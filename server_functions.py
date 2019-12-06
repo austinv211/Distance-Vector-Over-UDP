@@ -5,9 +5,9 @@ import threading
 import types
 from message import Message
 import pickle
-import sys
 from dijkstar import Graph, find_path
 import math
+import os
 
 LOCAL_TOPOLOGY = None
 DEFAULT_SELECTOR = selectors.DefaultSelector()
@@ -68,12 +68,12 @@ def _disable(neighbor_id):
     return 'disable SUCCESS'
 
 def _crash():
-    message = Message([], MY_PORT, MY_ID, _myip(), flag='disable')
+    message = Message([], MY_PORT, MY_ID, _myip(), flag='crash')
     for (n_id, _) in LOCAL_TOPOLOGY.neighbors[MY_ID]:
         send_it(n_id, pickle.dumps(message))
     LOCAL_TOPOLOGY.neighbors = {}
     print('SERVER CRASHED!')
-    sys.exit(0)
+    os._exit(1)
         
 
 def _packets():
@@ -120,7 +120,7 @@ def _update(s_id_1, s_id_2, new_cost):
     else:
         new_cost = -1
         s_id_1, s_id_2 = map(int, [s_id_1, s_id_2])
-    message = Message([(s_id_1, s_id_2, new_cost), (s_id_2, s_id_1, new_cost)], MY_PORT, MY_ID, _myip)
+    message = Message([(s_id_1, s_id_2, new_cost), (s_id_2, s_id_1, new_cost)], MY_PORT, MY_ID, _myip, flag='update')
     if s_id_1 != MY_ID:
         send_it(s_id_1, pickle.dumps(message))
     if s_id_2 != MY_ID:
@@ -197,7 +197,11 @@ def service_connection(key, mask):
         recv_data = sock.recv(4096)  # Should be ready to read
         if recv_data:
             message = pickle.loads(recv_data)
-            update_routing_table(message.update_fields, message.sender_id)
+            update_routing_table(message.update_fields, message.sender_id, internal= message.flag == 'update')
+            # check if crash flag
+            if message.flag == 'crash':
+                LOCAL_TOPOLOGY.remove_neighbor(MY_ID, message.sender_id)
+                update_routing_table([(message.sender_id, MY_ID, INF), (MY_ID, message.sender_id, INF)] + [(message.sender_id, n_id, INF) for (n_id, _) in ROUTING_TABLE[message.sender_id]], MY_ID, internal=True)
             # Check if message flag is disable, if so remove the link
             if message.flag == 'disable':
                 LOCAL_TOPOLOGY.remove_neighbor(MY_ID, message.sender_id)
