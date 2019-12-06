@@ -26,7 +26,6 @@ class Topology:
         for index, item in enumerate(self.neighbors[server_id]):
             if item[0] == neighbor_id:
                 self.neighbors[server_id][index] = (item[0], new_cost)
-                print(f'New Cost: {self.neighbors[server_id][index]}')
                 break
 
     def __str__(self):

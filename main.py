@@ -28,7 +28,9 @@ async def main():
                 if result:
                     await aprint(result)
             except FileNotFoundError as e:
-                await aprint(f'{command_call} {e}')
+                await aprint(f'ERROR {command_call} {e}')
+            except TypeError as e:
+                await aprint(f'ERROR {command_call} {e}')
             except:
                 the_type, the_value, _ = sys.exc_info()
                 await aprint(f'{command_call} {" ".join(*command_args)} {the_type}:{the_value}')

@@ -2,12 +2,11 @@ import socket
 from topology import topology_reader
 import selectors
 import threading
-import time
 import types
 from message import Message
 import pickle
 import sys
-
+from dijkstar import Graph, find_path
 
 LOCAL_TOPOLOGY = None
 DEFAULT_SELECTOR = selectors.DefaultSelector()
@@ -19,7 +18,8 @@ MY_SOCK = None
 PACKETS_RECEIVED = 0
 ROUTING_TABLE = {}
 COUNT_SINCE_RECEIVED = {}
-
+GRAPH = Graph()
+NEIGHBOR_SOCKETS = {}
 
 def update_routing_table(server_costs, overwrite=False):
     global ROUTING_TABLE
@@ -29,12 +29,14 @@ def update_routing_table(server_costs, overwrite=False):
             for index, item in enumerate(ROUTING_TABLE[s_id]):
                 if item[0] == n_id:
                     found_n_id = True
+                    GRAPH.get_node(s_id).update({n_id: cost})
                     ROUTING_TABLE[s_id][index] = (n_id, cost)
             if not found_n_id:
+                GRAPH.add_edge(s_id, n_id, cost)
                 ROUTING_TABLE[s_id].append((n_id, cost))
         else:
+            GRAPH.add_edge(s_id, n_id, cost)
             ROUTING_TABLE[s_id] = [(n_id, cost)]
-
         if s_id in LOCAL_TOPOLOGY.neighbors:
             LOCAL_TOPOLOGY.update_cost(s_id, n_id, cost)
         
@@ -43,12 +45,12 @@ def _display():
     print(LOCAL_TOPOLOGY)
     keys = ROUTING_TABLE.keys()
     keys = sorted(keys)
-    print(f'source_id next_hop_id cost')
-    print(f'_________ ___________ ____')
+    print(f'source_id next_hop_id cost shortest_cost')
+    print(f'_________ ___________ ____ _____________')
     for key in keys:
         costs = ROUTING_TABLE[key]
         for (n_id, cost) in sorted(costs):
-            print(f'    {key}          {n_id}       {cost if cost > 0 else "inf"}')
+            print(f'    {key}          {n_id}       {cost if cost > 0 else "inf"}        { find_path(GRAPH, key, n_id).total_cost }')
     return 'display SUCCESS'
 
 
@@ -79,17 +81,22 @@ def update_neighbors(message):
         send_it(n_id, message)
 
 
-def send_it(connection_id: str, message):
+def send_it(connection_id, message):
     address = LOCAL_TOPOLOGY.servers[connection_id]
-    DEFAULT_SELECTOR.modify(MY_SOCK, events=EVENTS, data=types.SimpleNamespace(c_id=connection_id,addr=address, message=message))
+    lsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    lsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    lsock.sendto(message, address)
 
 
 def update_loop():
     while True:
+        import time
         time.sleep(NUM_SECS)
-        update_neighbors(pickle.dumps(Message([(MY_ID, n_id, cost) for key in ROUTING_TABLE.keys() for n_id, cost in ROUTING_TABLE[key] if n_id != MY_ID], MY_PORT, MY_ID, _myip)))
+        update_fields = [(key, n_id, cost) for key in ROUTING_TABLE.keys() for n_id, cost in ROUTING_TABLE[key] if n_id != MY_ID]
+        update_neighbors(pickle.dumps(Message(update_fields, MY_PORT, MY_ID, _myip)))
         for key in COUNT_SINCE_RECEIVED.keys():
-            if COUNT_SINCE_RECEIVED[key] == 3:
+            print(f'{key}: {COUNT_SINCE_RECEIVED[key]}')
+            if COUNT_SINCE_RECEIVED[key] >= 3:
                 update_routing_table([(MY_ID, key, -1)])
             COUNT_SINCE_RECEIVED[key] += 1
 
@@ -125,6 +132,7 @@ def _server(topology_file_path, routing_update_interval):
     global MY_PORT
     global NUM_SECS
     global COUNT_SINCE_RECEIVED
+    global GRAPH
     NUM_SECS = int(routing_update_interval)
     my_ip = _myip()
     LOCAL_TOPOLOGY = topology_reader(topology_file_path)
@@ -134,8 +142,9 @@ def _server(topology_file_path, routing_update_interval):
             MY_ID = id
             MY_PORT = port
             run_server(port)
-            for (n_id, _) in LOCAL_TOPOLOGY.neighbors[MY_ID]:
+            for (n_id, cost) in LOCAL_TOPOLOGY.neighbors[MY_ID]:
                 COUNT_SINCE_RECEIVED[n_id] = 0
+                GRAPH.add_edge(MY_ID, n_id, cost)
             return f'topology gathered, server running: {(MY_ID, my_ip, MY_PORT)}'
     return f'Could not find ip in topology'
 
@@ -176,7 +185,6 @@ def service_connection(key, mask):
     '''
     global PACKETS_RECEIVED
     sock = key.fileobj
-    data = key.data
     if mask & selectors.EVENT_READ:
         recv_data = sock.recv(4096)  # Should be ready to read
         if recv_data:
@@ -184,22 +192,19 @@ def service_connection(key, mask):
             update_routing_table(message.update_fields)
             # Check if message flag is disable, if so remove the link
             if message.flag == 'disable':
-                LOCAL_TOPOLOGY.remove_neighbor(MY_ID, data.c_id)
-                update_routing_table([(MY_ID, data.c_id, -1)])
+                LOCAL_TOPOLOGY.remove_neighbor(MY_ID, message.sender_id)
+                update_routing_table([(MY_ID, message.sender_id, -1)])
             PACKETS_RECEIVED += 1
-            print(f'RECEIVED A MESSAGE FROM SERVER: {data.c_id}')
-            COUNT_SINCE_RECEIVED[data.c_id] = 0
-    if mask & selectors.EVENT_WRITE:
-        if data.message:
-            sock.sendto(data.message, data.addr)
-            data.message = None  # Should be ready to write
+            if message.flag != 'disable':
+                print(f'RECEIVED A MESSAGE FROM SERVER: {message.sender_id}')
+            COUNT_SINCE_RECEIVED[message.sender_id] = 0
 
 def general_loop():
     try:
         while True:
             events_to_check = DEFAULT_SELECTOR.select(timeout=None)
             for key, mask in events_to_check:
-                if key.data:
+                if key:
                     service_connection(key, mask)
     except KeyboardInterrupt:
         print("caught keyboard interrupt, exiting")

@@ -7,6 +7,7 @@ class Message:
         self.update_fields = update_fields
         self.sender_port = sender_port
         self.sender_ip = sender_ip
+        self.sender_id = sender_id
         self.flag = flag
 
     def __str__(self):
