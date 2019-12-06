@@ -7,6 +7,7 @@ from message import Message
 import pickle
 import sys
 from dijkstar import Graph, find_path
+import math
 
 LOCAL_TOPOLOGY = None
 DEFAULT_SELECTOR = selectors.DefaultSelector()
@@ -20,25 +21,28 @@ ROUTING_TABLE = {}
 COUNT_SINCE_RECEIVED = {}
 GRAPH = Graph()
 NEIGHBOR_SOCKETS = {}
+INF = math.inf
 
-def update_routing_table(server_costs, overwrite=False):
+
+def update_routing_table(server_costs, sender_id, internal=False):
     global ROUTING_TABLE
     for (s_id, n_id, cost) in server_costs:
-        if s_id in ROUTING_TABLE:
-            found_n_id = False
-            for index, item in enumerate(ROUTING_TABLE[s_id]):
-                if item[0] == n_id:
-                    found_n_id = True
-                    GRAPH.get_node(s_id).update({n_id: cost})
-                    ROUTING_TABLE[s_id][index] = (n_id, cost)
-            if not found_n_id:
+        if (s_id != MY_ID and n_id != MY_ID) or internal or s_id == sender_id:
+            if s_id in ROUTING_TABLE:
+                found_n_id = False
+                for index, item in enumerate(ROUTING_TABLE[s_id]):
+                    if item[0] == n_id:
+                        found_n_id = True
+                        GRAPH.get_node(s_id).update({n_id: cost})
+                        ROUTING_TABLE[s_id][index] = (n_id, cost)
+                if not found_n_id:
+                    GRAPH.add_edge(s_id, n_id, cost)
+                    ROUTING_TABLE[s_id].append((n_id, cost))
+            else:
                 GRAPH.add_edge(s_id, n_id, cost)
-                ROUTING_TABLE[s_id].append((n_id, cost))
-        else:
-            GRAPH.add_edge(s_id, n_id, cost)
-            ROUTING_TABLE[s_id] = [(n_id, cost)]
-        if s_id in LOCAL_TOPOLOGY.neighbors:
-            LOCAL_TOPOLOGY.update_cost(s_id, n_id, cost)
+                ROUTING_TABLE[s_id] = [(n_id, cost)]
+            if s_id in LOCAL_TOPOLOGY.neighbors:
+                LOCAL_TOPOLOGY.update_cost(s_id, n_id, cost)
         
 
 def _display():
@@ -50,23 +54,26 @@ def _display():
     for key in keys:
         costs = ROUTING_TABLE[key]
         for (n_id, cost) in sorted(costs):
-            print(f'    {key}          {n_id}       {cost if cost > 0 else "inf"}        { find_path(GRAPH, key, n_id).total_cost }')
+            print(f'    {key}          {n_id}       {cost if not math.isinf(cost) else "inf"}        { find_path(GRAPH, key, n_id).total_cost }')
     return 'display SUCCESS'
 
 
 def _disable(neighbor_id):
     neighbor_id = int(neighbor_id)
-    message = Message([(MY_ID, neighbor_id, -1)], MY_PORT, MY_ID, _myip(), flag='disable')
+    message = Message([], MY_PORT, MY_ID, _myip(), flag='disable')
     send_it(neighbor_id, pickle.dumps(message))
     LOCAL_TOPOLOGY.remove_neighbor(MY_ID, neighbor_id)
-    update_routing_table([(MY_ID, neighbor_id, -1)])
-    update_routing_table([(neighbor_id, MY_ID, -1)])
+    update_routing_table([(MY_ID, neighbor_id, INF)], MY_ID, internal=True)
+    update_routing_table([(neighbor_id, MY_ID, INF)], MY_ID, internal=True)
     return 'disable SUCCESS'
 
 def _crash():
+    message = Message([], MY_PORT, MY_ID, _myip(), flag='disable')
     for (n_id, _) in LOCAL_TOPOLOGY.neighbors[MY_ID]:
-        # call disable for every neighbor
-        _disable(n_id)
+        send_it(n_id, pickle.dumps(message))
+    LOCAL_TOPOLOGY.neighbors = {}
+    print('SERVER CRASHED!')
+    sys.exit(0)
         
 
 def _packets():
@@ -97,7 +104,8 @@ def update_loop():
         for key in COUNT_SINCE_RECEIVED.keys():
             print(f'{key}: {COUNT_SINCE_RECEIVED[key]}')
             if COUNT_SINCE_RECEIVED[key] >= 3:
-                update_routing_table([(MY_ID, key, -1)])
+                update_routing_table([(MY_ID, key, INF)], MY_ID, internal=True)
+                update_routing_table([(key, MY_ID, INF)], MY_ID, internal=True)
             COUNT_SINCE_RECEIVED[key] += 1
 
 
@@ -121,7 +129,7 @@ def _update(s_id_1, s_id_2, new_cost):
     if s_id_1 == MY_ID:
         for (n_id, _) in LOCAL_TOPOLOGY.neighbors[MY_ID]:
             if s_id_2 == n_id:
-                update_routing_table([(MY_ID, n_id, new_cost)])
+                update_routing_table([(MY_ID, n_id, new_cost)], MY_ID, internal=True)
 
     return f'update {s_id_1} {s_id_2} {new_cost} SUCCESS'
 
@@ -172,7 +180,7 @@ def run_server(port_number):
     lsock.setblocking(False)
     MY_SOCK = lsock
     DEFAULT_SELECTOR.register(lsock, selectors.EVENT_READ, data=None)
-    update_routing_table([(MY_ID, n_id, cost) for n_id, cost in LOCAL_TOPOLOGY.neighbors[MY_ID]])
+    update_routing_table([(MY_ID, n_id, cost) for n_id, cost in LOCAL_TOPOLOGY.neighbors[MY_ID]], MY_ID, internal=True)
     gen_thread = threading.Thread(name='general_loop', target=general_loop)
     gen_thread.start()
     event_thread = threading.Thread(name='update_loop', target=update_loop)
@@ -189,15 +197,18 @@ def service_connection(key, mask):
         recv_data = sock.recv(4096)  # Should be ready to read
         if recv_data:
             message = pickle.loads(recv_data)
-            update_routing_table(message.update_fields)
+            update_routing_table(message.update_fields, message.sender_id)
             # Check if message flag is disable, if so remove the link
             if message.flag == 'disable':
                 LOCAL_TOPOLOGY.remove_neighbor(MY_ID, message.sender_id)
-                update_routing_table([(MY_ID, message.sender_id, -1)])
+                update_routing_table([(MY_ID, message.sender_id, INF)], MY_ID, internal=True)
+                update_routing_table([(message.sender_id, MY_ID, INF)], MY_ID, internal=True)
             PACKETS_RECEIVED += 1
             if message.flag != 'disable':
                 print(f'RECEIVED A MESSAGE FROM SERVER: {message.sender_id}')
-            COUNT_SINCE_RECEIVED[message.sender_id] = 0
+                COUNT_SINCE_RECEIVED[message.sender_id] = 0
+                update_routing_table([(MY_ID, message.sender_id, GRAPH.get_edge(message.sender_id, MY_ID))], MY_ID, internal=True)
+
 
 def general_loop():
     try:
