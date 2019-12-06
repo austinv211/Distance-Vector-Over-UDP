@@ -25,38 +25,41 @@ INF = math.inf
 LINK_STATUS = {}
 
 
-def update_routing_table(server_costs, sender_id, internal=False):
+def update_routing_table(server_costs, sender_id, update=False):
     global ROUTING_TABLE
 
     for (s_id, n_id, cost) in server_costs:
-        if (s_id == MY_ID and sender_id == MY_ID) or (n_id == MY_ID and sender_id == s_id) or (s_id != MY_ID and n_id != MY_ID):
-            if (s_id, n_id) in LINK_STATUS and not LINK_STATUS[(s_id, n_id)]:
+        if (s_id, n_id) in LINK_STATUS and not LINK_STATUS[(s_id, n_id)]:
+            return
+
+        if (s_id == MY_ID or n_id == MY_ID) and s_id in ROUTING_TABLE and n_id in ROUTING_TABLE and (s_id == MY_ID or n_id == MY_ID) and not update:
+            if not math.isinf(cost):
                 return
 
-            if s_id in ROUTING_TABLE:
-                found_n_id = False
-                for index, item in enumerate(ROUTING_TABLE[s_id]):
-                    if item[0] == n_id:
-                        found_n_id = True
-                        GRAPH.get_node(s_id).update({n_id: cost})
-                        ROUTING_TABLE[s_id][index] = (n_id, cost)
-                if not found_n_id:
-                    GRAPH.add_edge(s_id, n_id, cost)
-                    ROUTING_TABLE[s_id].append((n_id, cost))
-            else:
+        if s_id in ROUTING_TABLE:
+            found_n_id = False
+            for index, item in enumerate(ROUTING_TABLE[s_id]):
+                if item[0] == n_id:
+                    found_n_id = True
+                    GRAPH.get_node(s_id).update({n_id: cost})
+                    ROUTING_TABLE[s_id][index] = (n_id, cost)
+            if not found_n_id:
                 GRAPH.add_edge(s_id, n_id, cost)
-                ROUTING_TABLE[s_id] = [(n_id, cost)]
+                ROUTING_TABLE[s_id].append((n_id, cost))
+        else:
+            GRAPH.add_edge(s_id, n_id, cost)
+            ROUTING_TABLE[s_id] = [(n_id, cost)]
 
-            if n_id in ROUTING_TABLE:
-                found_n_id = False
-                for index, item in enumerate(ROUTING_TABLE[n_id]):
-                    if item[0] == s_id:
-                        found_n_id = True
-                        GRAPH.get_node(n_id).update({s_id: cost})
-                        ROUTING_TABLE[n_id][index] = (s_id, cost)
-                if not found_n_id:
-                    GRAPH.add_edge(n_id, s_id, cost)
-                    ROUTING_TABLE[n_id].append((s_id, cost))
+        if n_id in ROUTING_TABLE:
+            found_n_id = False
+            for index, item in enumerate(ROUTING_TABLE[n_id]):
+                if item[0] == s_id:
+                    found_n_id = True
+                    GRAPH.get_node(n_id).update({s_id: cost})
+                    ROUTING_TABLE[n_id][index] = (s_id, cost)
+            if not found_n_id:
+                GRAPH.add_edge(n_id, s_id, cost)
+                ROUTING_TABLE[n_id].append((s_id, cost))
         
 
 def _display():
@@ -77,8 +80,8 @@ def _disable(neighbor_id):
     message = Message([], MY_PORT, MY_ID, _myip(), flag='disable')
     send_it(neighbor_id, pickle.dumps(message))
     LOCAL_TOPOLOGY.remove_neighbor(MY_ID, neighbor_id)
-    update_routing_table([(MY_ID, neighbor_id, INF)], MY_ID, internal=True)
-    update_routing_table([(neighbor_id, MY_ID, INF)], MY_ID, internal=True)
+    update_routing_table([(MY_ID, neighbor_id, INF)], MY_ID)
+    update_routing_table([(neighbor_id, MY_ID, INF)], MY_ID)
     LINK_STATUS[(MY_ID, neighbor_id)] = False
     LINK_STATUS[(neighbor_id, MY_ID)] = False
     return 'disable SUCCESS'
@@ -120,8 +123,8 @@ def update_loop():
         for key in COUNT_SINCE_RECEIVED.keys():
             print(f'{key}: {COUNT_SINCE_RECEIVED[key]}')
             if COUNT_SINCE_RECEIVED[key] >= 3:
-                update_routing_table([(MY_ID, key, INF)], MY_ID, internal=True)
-                update_routing_table([(key, MY_ID, INF)], MY_ID, internal=True)
+                update_routing_table([(MY_ID, key, INF)], MY_ID)
+                update_routing_table([(key, MY_ID, INF)], MY_ID)
             COUNT_SINCE_RECEIVED[key] += 1
 
 
@@ -134,9 +137,9 @@ def _update(s_id_1, s_id_2, new_cost):
     if new_cost != 'inf':
         s_id_1, s_id_2, new_cost = map(int, [s_id_1, s_id_2, new_cost])
     else:
-        new_cost = -1
+        new_cost = INF
         s_id_1, s_id_2 = map(int, [s_id_1, s_id_2])
-    message = Message([(s_id_1, s_id_2, new_cost), (s_id_2, s_id_1, new_cost)], MY_PORT, MY_ID, _myip, flag='update')
+    message = Message([(s_id_1, s_id_2, new_cost)], MY_PORT, MY_ID, _myip, flag='update')
     if s_id_1 != MY_ID:
         send_it(s_id_1, pickle.dumps(message))
     if s_id_2 != MY_ID:
@@ -145,7 +148,7 @@ def _update(s_id_1, s_id_2, new_cost):
     if s_id_1 == MY_ID:
         for (n_id, _) in LOCAL_TOPOLOGY.neighbors[MY_ID]:
             if s_id_2 == n_id:
-                update_routing_table([(MY_ID, n_id, new_cost)], MY_ID, internal=True)
+                update_routing_table([(MY_ID, n_id, new_cost)], MY_ID)
 
     return f'update {s_id_1} {s_id_2} {new_cost} SUCCESS'
 
@@ -179,12 +182,11 @@ def _server(topology_file_path, routing_update_interval):
 def _myip() -> None:
     try:
         # TODO: ifconfig eth0 or ipconfig
-        address_list = socket.gethostbyname_ex(socket.gethostname())[2]
-        for address in address_list:
-            if address != '127.0.0.1':
-                return address
-        print('Could not get IP address. Exiting ...')
-        sys.exit(1)
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
     except:
         print('Error Getting IP.')
 
@@ -199,7 +201,7 @@ def run_server(port_number):
     lsock.setblocking(False)
     MY_SOCK = lsock
     DEFAULT_SELECTOR.register(lsock, selectors.EVENT_READ, data=None)
-    update_routing_table([(MY_ID, n_id, cost) for n_id, cost in LOCAL_TOPOLOGY.neighbors[MY_ID]], MY_ID, internal=True)
+    update_routing_table([(MY_ID, n_id, cost) for n_id, cost in LOCAL_TOPOLOGY.neighbors[MY_ID]], MY_ID)
     gen_thread = threading.Thread(name='general_loop', target=general_loop)
     gen_thread.start()
     event_thread = threading.Thread(name='update_loop', target=update_loop)
@@ -216,7 +218,7 @@ def service_connection(key, mask):
         recv_data = sock.recv(4096)  # Should be ready to read
         if recv_data:
             message = pickle.loads(recv_data)
-            update_routing_table(message.update_fields, message.sender_id)
+            update_routing_table(message.update_fields, message.sender_id, update= (message.flag == 'update'))
             # check if crash flag
             if message.flag == 'crash' or message.flag == 'disable':
                 LOCAL_TOPOLOGY.remove_neighbor(MY_ID, message.sender_id)
@@ -230,7 +232,8 @@ def service_connection(key, mask):
             else:
                 PACKETS_RECEIVED += 1
                 print(f'RECEIVED A MESSAGE FROM SERVER: {message.sender_id}')
-                COUNT_SINCE_RECEIVED[message.sender_id] = 0
+                if message.sender_id in [n_id for (n_id, _) in LOCAL_TOPOLOGY.neighbors[MY_ID]]:
+                    COUNT_SINCE_RECEIVED[message.sender_id] = 0
 
 
 def general_loop():
