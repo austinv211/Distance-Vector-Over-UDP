@@ -22,12 +22,17 @@ COUNT_SINCE_RECEIVED = {}
 GRAPH = Graph()
 NEIGHBOR_SOCKETS = {}
 INF = math.inf
+LINK_STATUS = {}
 
 
 def update_routing_table(server_costs, sender_id, internal=False):
     global ROUTING_TABLE
+
     for (s_id, n_id, cost) in server_costs:
-        if (s_id != MY_ID and n_id != MY_ID) or internal or s_id == sender_id:
+        if (s_id == MY_ID and sender_id == MY_ID) or (n_id == MY_ID and sender_id == s_id) or (s_id != MY_ID and n_id != MY_ID):
+            if (s_id, n_id) in LINK_STATUS and not LINK_STATUS[(s_id, n_id)]:
+                return
+
             if s_id in ROUTING_TABLE:
                 found_n_id = False
                 for index, item in enumerate(ROUTING_TABLE[s_id]):
@@ -41,8 +46,17 @@ def update_routing_table(server_costs, sender_id, internal=False):
             else:
                 GRAPH.add_edge(s_id, n_id, cost)
                 ROUTING_TABLE[s_id] = [(n_id, cost)]
-            if s_id in LOCAL_TOPOLOGY.neighbors:
-                LOCAL_TOPOLOGY.update_cost(s_id, n_id, cost)
+
+            if n_id in ROUTING_TABLE:
+                found_n_id = False
+                for index, item in enumerate(ROUTING_TABLE[n_id]):
+                    if item[0] == s_id:
+                        found_n_id = True
+                        GRAPH.get_node(n_id).update({s_id: cost})
+                        ROUTING_TABLE[n_id][index] = (s_id, cost)
+                if not found_n_id:
+                    GRAPH.add_edge(n_id, s_id, cost)
+                    ROUTING_TABLE[n_id].append((s_id, cost))
         
 
 def _display():
@@ -65,6 +79,8 @@ def _disable(neighbor_id):
     LOCAL_TOPOLOGY.remove_neighbor(MY_ID, neighbor_id)
     update_routing_table([(MY_ID, neighbor_id, INF)], MY_ID, internal=True)
     update_routing_table([(neighbor_id, MY_ID, INF)], MY_ID, internal=True)
+    LINK_STATUS[(MY_ID, neighbor_id)] = False
+    LINK_STATUS[(neighbor_id, MY_ID)] = False
     return 'disable SUCCESS'
 
 def _crash():
@@ -141,6 +157,7 @@ def _server(topology_file_path, routing_update_interval):
     global NUM_SECS
     global COUNT_SINCE_RECEIVED
     global GRAPH
+    global LINK_STATUS
     NUM_SECS = int(routing_update_interval)
     my_ip = _myip()
     LOCAL_TOPOLOGY = topology_reader(topology_file_path)
@@ -153,6 +170,8 @@ def _server(topology_file_path, routing_update_interval):
             for (n_id, cost) in LOCAL_TOPOLOGY.neighbors[MY_ID]:
                 COUNT_SINCE_RECEIVED[n_id] = 0
                 GRAPH.add_edge(MY_ID, n_id, cost)
+                LINK_STATUS[(MY_ID, n_id)] = True
+                LINK_STATUS[(n_id, MY_ID)] = True
             return f'topology gathered, server running: {(MY_ID, my_ip, MY_PORT)}'
     return f'Could not find ip in topology'
 
@@ -197,21 +216,21 @@ def service_connection(key, mask):
         recv_data = sock.recv(4096)  # Should be ready to read
         if recv_data:
             message = pickle.loads(recv_data)
-            update_routing_table(message.update_fields, message.sender_id, internal= message.flag == 'update')
+            update_routing_table(message.update_fields, message.sender_id)
             # check if crash flag
-            if message.flag == 'crash':
+            if message.flag == 'crash' or message.flag == 'disable':
                 LOCAL_TOPOLOGY.remove_neighbor(MY_ID, message.sender_id)
-                update_routing_table([(message.sender_id, MY_ID, INF), (MY_ID, message.sender_id, INF)] + [(message.sender_id, n_id, INF) for (n_id, _) in ROUTING_TABLE[message.sender_id]], MY_ID, internal=True)
-            # Check if message flag is disable, if so remove the link
-            if message.flag == 'disable':
-                LOCAL_TOPOLOGY.remove_neighbor(MY_ID, message.sender_id)
-                update_routing_table([(MY_ID, message.sender_id, INF)], MY_ID, internal=True)
-                update_routing_table([(message.sender_id, MY_ID, INF)], MY_ID, internal=True)
-            PACKETS_RECEIVED += 1
-            if message.flag != 'disable':
+                update_routing_table([(message.sender_id, MY_ID, INF), (MY_ID, message.sender_id, INF)], MY_ID)
+                LINK_STATUS[(message.sender_id, MY_ID)] = False
+                LINK_STATUS[(MY_ID, message.sender_id)] = False
+
+                if message.flag == 'crash':
+                    for (n_id, _) in ROUTING_TABLE[message.sender_id]:
+                        update_routing_table([(message.sender_id, n_id, INF), (n_id, message.sender_id, INF)], MY_ID)
+            else:
+                PACKETS_RECEIVED += 1
                 print(f'RECEIVED A MESSAGE FROM SERVER: {message.sender_id}')
                 COUNT_SINCE_RECEIVED[message.sender_id] = 0
-                update_routing_table([(MY_ID, message.sender_id, GRAPH.get_edge(message.sender_id, MY_ID))], MY_ID, internal=True)
 
 
 def general_loop():
