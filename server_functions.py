@@ -32,9 +32,10 @@ def update_routing_table(server_costs, sender_id, update=False):
         if (s_id, n_id) in LINK_STATUS and not LINK_STATUS[(s_id, n_id)]:
             return
 
-        if (s_id == MY_ID or n_id == MY_ID) and s_id in ROUTING_TABLE and n_id in ROUTING_TABLE and (s_id == MY_ID or n_id == MY_ID) and not update:
-            if not math.isinf(cost):
-                return
+        # if (s_id == MY_ID or n_id == MY_ID) and (s_id in ROUTING_TABLE and n_id in ROUTING_TABLE) and (s_id == MY_ID or n_id == MY_ID) and not update:
+        #     if not math.isinf(cost):
+        #         return
+
 
         if s_id in ROUTING_TABLE:
             found_n_id = False
@@ -125,11 +126,13 @@ def update_loop():
             if COUNT_SINCE_RECEIVED[key] >= 3:
                 update_routing_table([(MY_ID, key, INF)], MY_ID)
                 update_routing_table([(key, MY_ID, INF)], MY_ID)
+                _step()
             COUNT_SINCE_RECEIVED[key] += 1
 
 
 def _step():
-    update_neighbors(pickle.dumps(Message([(MY_ID, n_id, cost) for key in ROUTING_TABLE.keys() for n_id, cost in ROUTING_TABLE[key] if n_id != MY_ID], MY_PORT, MY_ID, _myip)))
+    update_fields = [(key, n_id, cost) for key in ROUTING_TABLE.keys() for n_id, cost in ROUTING_TABLE[key] if n_id != MY_ID]
+    update_neighbors(pickle.dumps(Message(update_fields, MY_PORT, MY_ID, _myip)))
     return f'step SUCCESS'
 
 
@@ -219,6 +222,8 @@ def service_connection(key, mask):
         if recv_data:
             message = pickle.loads(recv_data)
             update_routing_table(message.update_fields, message.sender_id, update= (message.flag == 'update'))
+            if message.flag == 'update':
+                _step()
             # check if crash flag
             if message.flag == 'crash' or message.flag == 'disable':
                 LOCAL_TOPOLOGY.remove_neighbor(MY_ID, message.sender_id)
