@@ -234,6 +234,7 @@ def service_connection(key, mask):
                 if message.flag == 'crash':
                     for (n_id, _) in ROUTING_TABLE[message.sender_id]:
                         update_routing_table([(message.sender_id, n_id, INF), (n_id, message.sender_id, INF)], MY_ID)
+                        _step()
             else:
                 PACKETS_RECEIVED += 1
                 print(f'RECEIVED A MESSAGE FROM SERVER: {message.sender_id}')
