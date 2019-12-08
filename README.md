@@ -14,9 +14,17 @@ out update routing information when routing table changes.
 A distance vector routing protocol only works on the basis of sending the routing table to its neighbors periodically or if there are any updates in the table. Initially, each server/node is going to have no information about the topology except its neighbors. Each server gets information about its whole topology, when each server starts to send information about its neighbors.
 _Examples of distance vector routing protocols are [RIPv1, RIPv2](https://en.wikipedia.org/wiki/Routing_Information_Protocol), [IGRP](https://en.wikipedia.org/wiki/Interior_Gateway_Routing_Protocol) and [EIGRP](https://en.wikipedia.org/wiki/Enhanced_Interior_Gateway_Routing_Protocol)_.
 
+## Required Dependencies
+- dijkstar
+- aioconsole
+* to install dependencies:
+python -m pip install dijkstar aioconsole
+
 ## 3. Server Commands/ Input format
 The server supports the following commands:-
-* server -t topology-file-name -i time-interval-for-step
+* to start python program:
+- python3 main.py
+* server topology-file-name time-interval-for-step
 * update server-id1 server-id2 updated-cost
 * step
 * packets
